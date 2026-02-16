@@ -1,1 +1,336 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>QR Code Tool</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
 
+        body {
+            font-family: Arial, Helvetica, sans-serif;
+            background: white;
+            min-height: 100vh;
+            padding: 10px;
+        }
+
+        .container {
+            max-width: 500px;
+            margin: 0 auto;
+            border: 1px solid black;
+        }
+
+        .header {
+            text-align: center;
+            padding: 15px;
+            border-bottom: 1px solid black;
+        }
+
+        .header h1 {
+            font-size: 24px;
+        }
+
+        .tab-bar {
+            display: flex;
+            border-bottom: 1px solid black;
+        }
+
+        .tab {
+            flex: 1;
+            text-align: center;
+            padding: 10px;
+            cursor: pointer;
+            background: white;
+            border: none;
+            font-size: 16px;
+        }
+
+        .tab.active {
+            background: black;
+            color: white;
+        }
+
+        .card {
+            padding: 15px;
+            display: none;
+        }
+
+        .card.active {
+            display: block;
+        }
+
+        /* Scanner */
+        .video-frame {
+            border: 2px solid black;
+            background: black;
+            margin-bottom: 15px;
+        }
+
+        #video {
+            width: 100%;
+            height: auto;
+            display: block;
+        }
+
+        .result-box {
+            border: 1px solid black;
+            padding: 10px;
+            margin: 10px 0;
+        }
+
+        #qr-data {
+            font-family: monospace;
+            word-break: break-all;
+            margin: 5px 0;
+        }
+
+        .status {
+            color: green;
+            font-size: 14px;
+            display: none;
+        }
+
+        .status.show {
+            display: block;
+        }
+
+        .btn {
+            width: 100%;
+            padding: 12px;
+            background: white;
+            border: 2px solid black;
+            font-size: 16px;
+            cursor: pointer;
+            margin: 5px 0;
+        }
+
+        .btn:hover {
+            background: black;
+            color: white;
+        }
+
+        /* Generator */
+        #qr-input {
+            width: 100%;
+            padding: 12px;
+            border: 2px solid black;
+            font-size: 16px;
+            margin: 10px 0;
+        }
+
+        .qr-preview {
+            border: 2px solid black;
+            padding: 20px;
+            text-align: center;
+            margin: 10px 0;
+        }
+
+        #qrcode {
+            margin-bottom: 15px;
+        }
+
+        #qrcode img {
+            max-width: 200px;
+            height: auto;
+        }
+
+        .qr-value {
+            border-top: 1px solid black;
+            padding-top: 10px;
+            font-family: monospace;
+            word-break: break-all;
+        }
+
+        .footer {
+            text-align: center;
+            padding: 10px;
+            border-top: 1px solid black;
+            font-size: 12px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>QR CODE TOOL</h1>
+        </div>
+
+        <div class="tab-bar">
+            <button class="tab active" onclick="switchTab('scan')">SCAN</button>
+            <button class="tab" onclick="switchTab('generate')">GENERATE</button>
+        </div>
+
+        <!-- Scan Tab -->
+        <div id="scan-card" class="card active">
+            <div class="video-frame">
+                <video id="video" autoplay playsinline></video>
+            </div>
+
+            <div class="result-box">
+                <div style="font-weight: bold;">SCANNED:</div>
+                <div id="qr-data">-</div>
+                <div id="copy-status" class="status">✓ COPIED TO CLIPBOARD</div>
+            </div>
+
+            <button class="btn" onclick="restartScan()">SCAN NEW</button>
+        </div>
+
+        <!-- Generate Tab -->
+        <div id="generate-card" class="card">
+            <input type="text" id="qr-input" placeholder="Enter text or URL" onkeyup="generateQR()">
+            
+            <div id="qr-preview" class="qr-preview" style="display: none;">
+                <div id="qrcode"></div>
+                <div class="qr-value" id="qr-value-display"></div>
+                <button class="btn" style="margin-top: 10px;" onclick="copyGenerated()">COPY VALUE</button>
+            </div>
+
+            <button class="btn" onclick="generateQR()">GENERATE QR</button>
+        </div>
+
+        <div class="footer">
+            SCAN → AUTO COPY | GENERATE → CREATE QR
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/qrcode@1.5.1/build/qrcode.min.js"></script>
+
+    <script>
+        let currentData = '';
+        let scanActive = true;
+        let cameraStream = null;
+
+        // Start camera immediately when page loads
+        async function startCamera() {
+            try {
+                cameraStream = await navigator.mediaDevices.getUserMedia({ 
+                    video: { facingMode: 'environment' } 
+                });
+                document.getElementById('video').srcObject = cameraStream;
+                startScanning();
+            } catch(err) {
+                alert('Camera access needed for QR scanning');
+                console.log(err);
+            }
+        }
+
+        // Continuous scanning
+        function startScanning() {
+            const video = document.getElementById('video');
+            const canvas = document.createElement('canvas');
+            const ctx = canvas.getContext('2d');
+
+            function scan() {
+                if (!scanActive) return;
+
+                if (video.readyState === video.HAVE_ENOUGH_DATA) {
+                    canvas.width = video.videoWidth;
+                    canvas.height = video.videoHeight;
+                    ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+
+                    const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+                    const code = jsQR(imageData.data, canvas.width, canvas.height);
+
+                    if (code && code.data !== currentData) {
+                        currentData = code.data;
+                        document.getElementById('qr-data').textContent = currentData;
+                        
+                        // Auto copy
+                        navigator.clipboard.writeText(currentData);
+                        
+                        // Show copied status
+                        document.getElementById('copy-status').classList.add('show');
+                        setTimeout(() => {
+                            document.getElementById('copy-status').classList.remove('show');
+                        }, 2000);
+
+                        // Vibrate if supported
+                        if (navigator.vibrate) navigator.vibrate(100);
+                    }
+                }
+                requestAnimationFrame(scan);
+            }
+            scan();
+        }
+
+        // Stop camera
+        function stopCamera() {
+            scanActive = false;
+            if (cameraStream) {
+                cameraStream.getTracks().forEach(track => track.stop());
+            }
+        }
+
+        // Restart scan
+        function restartScan() {
+            stopCamera();
+            currentData = '';
+            document.getElementById('qr-data').textContent = '-';
+            scanActive = true;
+            startCamera();
+        }
+
+        // Switch tabs
+        function switchTab(tab) {
+            // Update tab buttons
+            document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+            event.target.classList.add('active');
+
+            if (tab === 'scan') {
+                document.getElementById('scan-card').classList.add('active');
+                document.getElementById('generate-card').classList.remove('active');
+                scanActive = true;
+                startCamera();
+            } else {
+                document.getElementById('scan-card').classList.remove('active');
+                document.getElementById('generate-card').classList.add('active');
+                stopCamera();
+            }
+        }
+
+        // Generate QR code
+        function generateQR() {
+            const text = document.getElementById('qr-input').value;
+            
+            if (!text) {
+                document.getElementById('qr-preview').style.display = 'none';
+                return;
+            }
+
+            document.getElementById('qrcode').innerHTML = '';
+            
+            QRCode.toCanvas(document.createElement('canvas'), text, { width: 200 }, (err, canvas) => {
+                if (err) return;
+                
+                document.getElementById('qrcode').appendChild(canvas);
+                document.getElementById('qr-value-display').textContent = text;
+                document.getElementById('qr-preview').style.display = 'block';
+            });
+        }
+
+        // Copy generated value
+        function copyGenerated() {
+            const text = document.getElementById('qr-value-display').textContent;
+            navigator.clipboard.writeText(text);
+            
+            const btn = event.target;
+            const original = btn.textContent;
+            btn.textContent = '✓ COPIED';
+            setTimeout(() => {
+                btn.textContent = original;
+            }, 1000);
+        }
+
+        // Start camera when page loads
+        window.onload = startCamera;
+
+        // Clean up on page unload
+        window.onbeforeunload = stopCamera;
+    </script>
+</body>
+</html>
